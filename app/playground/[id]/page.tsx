@@ -9,11 +9,10 @@ import type { TemplateFile } from "@/features/playground/libs/path-to-json"
 import { useParams } from "next/navigation"
 import { getPlaygroundById, SaveUpdatedCode } from "@/features/playground/actions"
 import { toast } from "sonner"
-import { FileText, FolderOpen, AlertCircle, Save, X, Settings, Loader2, Sparkles, Lightbulb, Play, Terminal, Eye, EyeOff, Code2 } from "lucide-react"
+import { FileText, FolderOpen, AlertCircle, Save, X, Settings, Loader2, Sparkles, Lightbulb } from "lucide-react"
 import Editor, { type Monaco } from "@monaco-editor/react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
 import {
   Dialog,
   DialogContent,
@@ -31,8 +30,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
-import { Card, CardContent } from "@/components/ui/card"
-import { Switch } from "@/components/ui/switch"
 import WebContainerPreview from "@/features/webcontainers/components/webcontainer-preveiw"
 import LoadingStep from "@/components/ui/loader"
 import { configureMonaco, defaultEditorOptions, getEditorLanguage } from "@/features/playground/libs/editor-config"
@@ -42,16 +39,12 @@ import { useWebContainer } from "@/features/webcontainers/hooks/useWebContainer"
 import type { TemplateFolder } from "@/features/playground/libs/path-to-json"
 import { AISuggestionOverlay } from "@/features/playground/components/ai-suggestion-overlay"
 
+
 // Dynamic imports for components that don't need SSR
 const TerminalAsync = dynamic(() => import("@/features/webcontainers/components/terminal"), {
   ssr: false,
   loading: () => (
-    <div className="flex items-center justify-center h-full text-muted-foreground bg-zinc-50 dark:bg-zinc-900 rounded-lg">
-      <div className="flex flex-col items-center gap-2">
-        <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
-        <span className="text-sm">Loading terminal...</span>
-      </div>
-    </div>
+    <div className="flex items-center justify-center h-full text-muted-foreground">Loading terminal...</div>
   ),
 })
 
@@ -114,8 +107,7 @@ const MainPlaygroundPage: React.FC = () => {
   } | null>(null)
   const [suggestionDecoration, setSuggestionDecoration] = useState<string[]>([])
   const [suggestionType, setSuggestionType] = useState<string>("completion")
-  const [isAISuggestionsEnabled, setIsAISuggestionsEnabled] = useState(true);
-  
+const [isAISuggestionsEnabled, setIsAISuggestionsEnabled] = useState(true);
   // Refs
   const editorRef = useRef<any>(null)
   const monacoRef = useRef<Monaco | null>(null)
@@ -135,6 +127,81 @@ const MainPlaygroundPage: React.FC = () => {
   } = useWebContainer({
     templateData,
   })
+
+ const fetchCodeSuggestion = async (suggestionType: string = "completion") => {
+  if (!isAISuggestionsEnabled || !activeFile || !editorRef.current) return;
+
+  const model = editorRef.current.getModel();
+  const cursorPosition = editorRef.current.getPosition();
+
+  const fileContent = model.getValue(); // Get full file content
+  const cursorLine = cursorPosition.lineNumber - 1; // Convert to 0-based index
+  const cursorColumn = cursorPosition.column - 1; // Same here
+
+  try {
+    const response = await fetch("/api/code-suggestion", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fileContent,
+        cursorLine,
+        cursorColumn,
+        suggestionType: "completion",
+      }),
+    });
+
+    const data = await response.json();
+
+    if (data.suggestion && editorRef.current) {
+      const suggestionText = data.suggestion.trim();
+      setSuggestion(suggestionText);
+      setSuggestionPosition({ line: cursorPosition.lineNumber, column: cursorPosition.column });
+
+      // Highlight the suggestion as ghost text
+      applyGhostText(editorRef.current, suggestionText, cursorPosition.lineNumber, cursorPosition.column);
+    }
+  } catch (error) {
+    console.error("Error fetching code suggestion:", error);
+  }
+};
+  const applyGhostText = (
+    editor: any,
+    suggestion: string,
+    lineNumber: number,
+    column: number
+  ) => {
+    if (!editor) return;
+
+    const model = editor.getModel();
+    if (!model) return;
+
+    // Validate lineNumber
+    const totalLines = model.getLineCount();
+    if (lineNumber < 1 || lineNumber > totalLines) {
+      console.error(`Invalid lineNumber: ${lineNumber}. Total lines: ${totalLines}`);
+      return;
+    }
+
+    const endOfLine = model.getLineMaxColumn(lineNumber);
+
+    if (!monacoRef.current) return;
+
+    const decoration = [
+      {
+        range: new monacoRef.current.Range(lineNumber, column, lineNumber, endOfLine),
+        options: {
+          isWholeLine: false,
+          inlineClassName: "ghost-text",
+          hoverMessage: { value: `💡 AI Suggestion: ${suggestion}` },
+        },
+      },
+    ];
+
+    const newDecorations = editor.deltaDecorations(suggestionDecoration, decoration);
+    setSuggestionDecoration(newDecorations);
+  }
 
   // Initialize WebContainer only once
   useEffect(() => {
@@ -269,84 +336,7 @@ const MainPlaygroundPage: React.FC = () => {
     }
   }
 
-  // Fetch code suggestion
-  const fetchCodeSuggestion = async (suggestionType: string = "completion") => {
-    if (!isAISuggestionsEnabled || !activeFile || !editorRef.current) return;
-
-    const model = editorRef.current.getModel();
-    const cursorPosition = editorRef.current.getPosition();
-
-    const fileContent = model.getValue(); // Get full file content
-    const cursorLine = cursorPosition.lineNumber - 1; // Convert to 0-based index
-    const cursorColumn = cursorPosition.column - 1; // Same here
-
-    try {
-      const response = await fetch("/api/code-suggestion", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          fileContent,
-          cursorLine,
-          cursorColumn,
-          suggestionType: "completion",
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.suggestion && editorRef.current) {
-        const suggestionText = data.suggestion.trim();
-        setSuggestion(suggestionText);
-        setSuggestionPosition({ line: cursorPosition.lineNumber, column: cursorPosition.column });
-
-        // Highlight the suggestion as ghost text
-        applyGhostText(editorRef.current, suggestionText, cursorPosition.lineNumber, cursorPosition.column);
-      }
-    } catch (error) {
-      console.error("Error fetching code suggestion:", error);
-    }
-  };
-
-  const applyGhostText = (
-    editor: any,
-    suggestion: string,
-    lineNumber: number,
-    column: number
-  ) => {
-    if (!editor) return;
-
-    const model = editor.getModel();
-    if (!model) return;
-
-    // Validate lineNumber
-    const totalLines = model.getLineCount();
-    if (lineNumber < 1 || lineNumber > totalLines) {
-      console.error(`Invalid lineNumber: ${lineNumber}. Total lines: ${totalLines}`);
-      return;
-    }
-
-    const endOfLine = model.getLineMaxColumn(lineNumber);
-
-    if (!monacoRef.current) return;
-
-    const decoration = [
-      {
-        range: new monacoRef.current.Range(lineNumber, column, lineNumber, endOfLine),
-        options: {
-          isWholeLine: false,
-          inlineClassName: "ghost-text",
-          hoverMessage: { value: `💡 AI Suggestion: ${suggestion}` },
-        },
-      },
-    ];
-
-    const newDecorations = editor.deltaDecorations(suggestionDecoration, decoration);
-    setSuggestionDecoration(newDecorations);
-  }
-
-  // Open file
+  // File management functions
   const openFile = (file: TemplateFile) => {
     const fileId = generateFileId(file)
     const existingFile = openFiles.find((f) => f.id === fileId)
@@ -370,7 +360,6 @@ const MainPlaygroundPage: React.FC = () => {
     setEditorContent(file.content || "")
   }
 
-  // Close file
   const closeFile = (fileId: string) => {
     const file = openFiles.find((f) => f.id === fileId)
 
@@ -394,7 +383,6 @@ const MainPlaygroundPage: React.FC = () => {
     }
   }
 
-  // Close file forcefully
   const closeFileForce = (fileId: string) => {
     setOpenFiles((prev) => {
       const newFiles = prev.filter((f) => f.id !== fileId)
@@ -414,7 +402,6 @@ const MainPlaygroundPage: React.FC = () => {
     lastSyncedContent.current.delete(fileId)
   }
 
-  // Close all files
   const closeAllFiles = () => {
     const unsavedFiles = openFiles.filter((f) => f.hasUnsavedChanges)
 
@@ -444,12 +431,10 @@ const MainPlaygroundPage: React.FC = () => {
     }
   }
 
-  // Handle file select
   const handleFileSelect = (file: TemplateFile) => {
     openFile(file)
   }
 
-  // Handle add file
   const handleAddFile = (newFile: TemplateFile, parentPath: string) => {
     if (!templateData) return
 
@@ -490,7 +475,6 @@ const MainPlaygroundPage: React.FC = () => {
     }
   }
 
-  // Handle add folder
   const handleAddFolder = (newFolder: TemplateFolder, parentPath: string) => {
     if (!templateData) return
 
@@ -529,7 +513,6 @@ const MainPlaygroundPage: React.FC = () => {
     }
   }
 
-  // Handle delete file
   const handleDeleteFile = async (file: TemplateFile, parentPath: string) => {
     if (!templateData || !id) return
 
@@ -583,7 +566,6 @@ const MainPlaygroundPage: React.FC = () => {
     }
   }
 
-  // Handle delete folder
   const handleDeleteFolder = async (folder: TemplateFolder, parentPath: string) => {
     if (!templateData || !id) return
 
@@ -629,7 +611,7 @@ const MainPlaygroundPage: React.FC = () => {
     }
   }
 
-  // Rename file
+  // Rename functions
   const handleRenameFile = async (
     file: TemplateFile,
     newFilename: string,
@@ -709,7 +691,6 @@ const MainPlaygroundPage: React.FC = () => {
     }
   }
 
-  // Rename folder
   const handleRenameFolder = async (folder: TemplateFolder, newFolderName: string, parentPath: string) => {
     if (!templateData || !id) return
 
@@ -884,7 +865,6 @@ const MainPlaygroundPage: React.FC = () => {
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [suggestion, suggestionPosition])
-  
   // Save functions
   const handleSave = async (fileId?: string) => {
     const targetFileId = fileId || activeFileId
@@ -1089,86 +1069,53 @@ const MainPlaygroundPage: React.FC = () => {
   // Render loading state
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-800 p-6">
-        <Card className="w-full max-w-md border-red-200 dark:border-red-800 shadow-xl">
-          <CardContent className="pt-6">
-            <div className="flex flex-col items-center text-center space-y-4">
-              <div className="p-4 bg-red-50 dark:bg-red-950 rounded-full">
-                <AlertCircle className="h-8 w-8 text-red-600 dark:text-red-400" />
-              </div>
-              <div className="space-y-2">
-                <h2 className="text-xl font-semibold text-red-600 dark:text-red-400">Something went wrong</h2>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">{error}</p>
-              </div>
-              <Button
-                onClick={() => {
-                  setError(null)
-                  fetchPlaygroundTemplateData()
-                }}
-                variant="destructive"
-                className="w-full"
-              >
-                Try Again
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-4">
+        <AlertCircle className="h-12 w-12 text-red-500 mb-4" />
+        <h2 className="text-xl font-semibold text-red-600 mb-2">Something went wrong</h2>
+        <p className="text-gray-600 mb-4">{error}</p>
+        <Button
+          onClick={() => {
+            setError(null)
+            fetchPlaygroundTemplateData()
+          }}
+          variant="destructive"
+        >
+          Try Again
+        </Button>
       </div>
     )
   }
 
   if (loadingStep < 3) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-800 p-6">
-        <Card className="w-full max-w-md shadow-xl border-zinc-200 dark:border-zinc-800">
-          <CardContent className="pt-6">
-            <div className="space-y-6">
-              <div className="text-center">
-                <div className="p-4 bg-blue-50 dark:bg-blue-950 rounded-full w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-                  <Code2 className="h-8 w-8 text-blue-600 dark:text-blue-400" />
-                </div>
-                <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Loading Playground</h2>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">Setting up your development environment</p>
-              </div>
-              
-              <div className="space-y-4">
-                <LoadingStep currentStep={loadingStep} step={1} label="Loading playground metadata" />
-                <LoadingStep currentStep={loadingStep} step={2} label="Loading template structure" />
-                <LoadingStep currentStep={loadingStep} step={3} label="Ready to explore" />
-              </div>
-              
-              <div className="w-full h-2 bg-zinc-200 dark:bg-zinc-700 rounded-full overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-blue-500 to-purple-600 h-full transition-all duration-500 ease-out rounded-full"
-                  style={{ width: `${(loadingStep / 3) * 100}%` }}
-                />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-4">
+        <div className="w-full max-w-md p-6 rounded-lg shadow-sm border">
+          <h2 className="text-xl font-semibold mb-6 text-center">Loading Playground</h2>
+          <div className="mb-8">
+            <LoadingStep currentStep={loadingStep} step={1} label="Loading playground metadata" />
+            <LoadingStep currentStep={loadingStep} step={2} label="Loading template structure" />
+            <LoadingStep currentStep={loadingStep} step={3} label="Ready to explore" />
+          </div>
+          <div className="w-full h-2 rounded-full overflow-hidden">
+            <div
+              className="bg-red-600 h-full transition-all duration-300 ease-in-out"
+              style={{ width: `${(loadingStep / 3) * 100}%` }}
+            />
+          </div>
+        </div>
       </div>
     )
   }
 
   if (!templateData) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-800 p-6">
-        <Card className="w-full max-w-md border-amber-200 dark:border-amber-800 shadow-xl">
-          <CardContent className="pt-6">
-            <div className="flex flex-col items-center text-center space-y-4">
-              <div className="p-4 bg-amber-50 dark:bg-amber-950 rounded-full">
-                <FolderOpen className="h-8 w-8 text-amber-600 dark:text-amber-400" />
-              </div>
-              <div className="space-y-2">
-                <h2 className="text-xl font-semibold text-amber-600 dark:text-amber-400">No template data available</h2>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">The template appears to be empty or in an invalid format</p>
-              </div>
-              <Button onClick={loadTemplate} variant="outline" className="w-full">
-                Reload Template
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-4">
+        <FolderOpen className="h-12 w-12 text-amber-500 mb-4" />
+        <h2 className="text-xl font-semibold text-amber-600 mb-2">No template data available</h2>
+        <p className="text-gray-600 mb-4">The template appears to be empty or in an invalid format</p>
+        <Button onClick={loadTemplate} variant="outline">
+          Reload Template
+        </Button>
       </div>
     )
   }
@@ -1176,7 +1123,6 @@ const MainPlaygroundPage: React.FC = () => {
   return (
     <TooltipProvider>
       <>
-        {/* Sidebar and File Tree */}
         <TemplateFileTree
           data={templateData}
           onFileSelect={handleFileSelect}
@@ -1191,71 +1137,43 @@ const MainPlaygroundPage: React.FC = () => {
         />
 
         <SidebarInset>
-          {/* Enhanced Header */}
-          <header className="flex h-16 items-center gap-4 border-b border-zinc-200 dark:border-zinc-800 px-4 bg-gradient-to-r from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-800 shadow-sm">
-            <SidebarTrigger className="-ml-1 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors" />
-            <Separator orientation="vertical" className="h-6" />
+          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
 
-            <div className="flex flex-1 items-center justify-between">
-              {/* Enhanced Project Info */}
-              <div className="flex flex-col">
-                <div className="flex items-center gap-2">
-                  <h1 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    {playgroundData?.name || "Code Playground"}
-                  </h1>
-                  <Badge variant="secondary" className="text-xs px-2 py-0.5">
-                    {openFiles.length} file{openFiles.length !== 1 ? 's' : ''} open
-                  </Badge>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                  {hasUnsavedChanges && (
-                    <div className="flex items-center gap-1">
-                      <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" />
-                      <span>Unsaved changes</span>
-                    </div>
-                  )}
-                </div>
+            <div className="flex flex-1 items-center gap-2">
+              <div className="flex flex-col flex-1">
+                <h1 className="text-sm font-medium">{playgroundData?.name || "Code Playground"}</h1>
+                <p className="text-xs text-muted-foreground">
+                  {openFiles.length} file(s) open
+                  {hasUnsavedChanges && " • Unsaved changes"}
+                </p>
               </div>
 
-              {/* Enhanced Actions */}
-              <div className="flex items-center gap-2">
-                {/* Save Buttons */}
-                <div className="flex items-center gap-1">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleSave}
-                        disabled={!activeFile || !activeFile.hasUnsavedChanges}
-                        className="h-8 px-3 border-zinc-300 dark:border-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Save (Ctrl+S)</TooltipContent>
-                  </Tooltip>
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleSave}
+                      disabled={!activeFile || !activeFile.hasUnsavedChanges}
+                    >
+                      <Save className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Save (Ctrl+S)</TooltipContent>
+                </Tooltip>
 
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        onClick={handleSaveAll} 
-                        disabled={!hasUnsavedChanges}
-                        className="h-8 px-3 border-zinc-300 dark:border-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                      >
-                        <Save className="h-3.5 w-3.5 mr-1" />
-                        All
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Save All (Ctrl+Shift+S)</TooltipContent>
-                  </Tooltip>
-                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button size="sm" variant="outline" onClick={handleSaveAll} disabled={!hasUnsavedChanges}>
+                      <Save className="h-4 w-4" /> All
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Save All (Ctrl+Shift+S)</TooltipContent>
+                </Tooltip>
 
-                <Separator orientation="vertical" className="h-6" />
-
-                {/* AI Suggestions */}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -1263,140 +1181,113 @@ const MainPlaygroundPage: React.FC = () => {
                       variant="outline"
                       onClick={() => fetchCodeSuggestion("completion")}
                       disabled={!activeFile || suggestionLoading}
-                      className="h-8 px-3 border-purple-300 dark:border-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/20 text-purple-700 dark:text-purple-300"
                     >
                       {suggestionLoading ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <Sparkles className="h-3.5 w-3.5" />
+                        <Sparkles className="h-4 w-4" />
                       )}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Get AI Suggestion (Ctrl+Space)</TooltipContent>
                 </Tooltip>
 
-                {/* AI Suggestions Toggle */}
-                <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-800 rounded-lg px-3 py-1.5">
-                  <Lightbulb className="h-3.5 w-3.5 text-zinc-600 dark:text-zinc-400" />
-                  <span className="text-xs text-zinc-600 dark:text-zinc-400">AI</span>
-                  <Switch
-                    checked={isAISuggestionsEnabled}
-                    onCheckedChange={setIsAISuggestionsEnabled}
-                    size="sm"
-                  />
-                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" variant="outline" disabled={!activeFile}>
+                      <Lightbulb className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => fetchCodeSuggestion("completion")}>
+                      Code Completion
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => fetchCodeSuggestion("function")}>
+                      Function Suggestion
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => fetchCodeSuggestion("variable")}>
+                      Variable Suggestion
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => fetchCodeSuggestion("import")}>Import Suggestion</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
-                <Separator orientation="vertical" className="h-6" />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" variant="outline">
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setIsPreviewVisible(!isPreviewVisible)}>
+                      {isPreviewVisible ? "Hide" : "Show"} Preview
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setIsTerminalVisible(!isTerminalVisible)}>
+                      {isTerminalVisible ? "Hide" : "Show"} Terminal
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={closeAllFiles}>Close All Files</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
-                {/* View Controls */}
                 <div className="flex items-center gap-1">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
                         size="sm"
-                        variant={isPreviewVisible ? "default" : "outline"}
-                        onClick={() => setIsPreviewVisible(!isPreviewVisible)}
-                        className="h-8 px-3"
+                        variant={isAISuggestionsEnabled ? "outline" : "ghost"}
+                        onClick={() => setIsAISuggestionsEnabled(!isAISuggestionsEnabled)}
                       >
-                        {isPreviewVisible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                        {isAISuggestionsEnabled ? "Disable AI" : "Enable AI"}
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>{isPreviewVisible ? "Hide" : "Show"} Preview</TooltipContent>
-                  </Tooltip>
-
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant={isTerminalVisible ? "default" : "outline"}
-                        onClick={() => setIsTerminalVisible(!isTerminalVisible)}
-                        className="h-8 px-3"
-                      >
-                        <Terminal className="h-3.5 w-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>{isTerminalVisible ? "Hide" : "Show"} Terminal</TooltipContent>
+                    <TooltipContent>
+                      {isAISuggestionsEnabled ? "Disable AI Suggestions" : "Enable AI Suggestions"}
+                    </TooltipContent>
                   </Tooltip>
                 </div>
-
-                {/* Settings Dropdown */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      className="h-8 px-3 border-zinc-300 dark:border-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                    >
-                      <Settings className="h-3.5 w-3.5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem onClick={() => setIsPreviewVisible(!isPreviewVisible)}>
-                      {isPreviewVisible ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
-                      {isPreviewVisible ? "Hide" : "Show"} Preview
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setIsTerminalVisible(!isTerminalVisible)}>
-                      <Terminal className="h-4 w-4 mr-2" />
-                      {isTerminalVisible ? "Hide" : "Show"} Terminal
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={closeAllFiles}>
-                      <X className="h-4 w-4 mr-2" />
-                      Close All Files
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
               </div>
             </div>
           </header>
 
-          {/* Main Content */}
-          <div className="h-[calc(100vh-4rem)] bg-zinc-50 dark:bg-zinc-900">
+          <div className="h-[calc(100vh-4rem)]">
             {openFiles.length > 0 ? (
               <div className="h-full flex flex-col">
-                {/* Enhanced File Tabs */}
-                <div className="border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-800">
+                {/* File Tabs */}
+                <div className="border-b bg-muted/30">
                   <Tabs value={activeFileId || ""} onValueChange={setActiveFileId}>
                     <div className="flex items-center justify-between px-4 py-2">
-                      <TabsList className="h-9 bg-transparent p-0 gap-1">
+                      <TabsList className="h-8 bg-transparent p-0">
                         {openFiles.map((file) => (
                           <TabsTrigger
                             key={file.id}
                             value={file.id}
-                            className="relative h-8 px-3 bg-zinc-200 dark:bg-zinc-700 data-[state=active]:bg-white dark:data-[state=active]:bg-zinc-900 data-[state=active]:shadow-sm group border border-zinc-300 dark:border-zinc-600 rounded-md"
+                            className="relative h-8 px-3 data-[state=active]:bg-background data-[state=active]:shadow-sm group"
                           >
-                            <div className="flex items-center gap-2 group">
-                              <span className="flex items-center gap-1.5">
-                                <FileText className="h-3 w-3 text-zinc-600 dark:text-zinc-400" />
-                                <span className="text-xs font-medium">
+                            <div className="flex items-center gap-2 justify-center group">
+                              <span className="flex items-center gap-1">
+                                <FileText className="h-3 w-3" />
+                                <span>
                                   {file.filename}.{file.fileExtension}
                                 </span>
-                                {file.hasUnsavedChanges && (
-                                  <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
-                                )}
+                                {file.hasUnsavedChanges && <span className="h-2 w-2 rounded-full bg-orange-500" />}
                               </span>
-                              <button
-                                className="ml-1 h-4 w-4 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 rounded-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              <span
+                                className="ml-2 h-4 w-4 hover:bg-destructive hover:text-destructive-foreground rounded-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                                 onClick={(e) => {
-                                  e.stopPropagation();
-                                  closeFile(file.id);
+                                  e.stopPropagation()
+                                  closeFile(file.id)
                                 }}
                               >
                                 <X className="h-3 w-3" />
-                              </button>
+                              </span>
                             </div>
                           </TabsTrigger>
                         ))}
                       </TabsList>
 
                       {openFiles.length > 1 && (
-                        <Button 
-                          size="sm" 
-                          variant="ghost" 
-                          onClick={closeAllFiles} 
-                          className="h-7 px-2 text-xs hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                        >
-                          <X className="h-3 w-3 mr-1" />
+                        <Button size="sm" variant="ghost" onClick={closeAllFiles} className="h-6 px-2 text-xs">
                           Close All
                         </Button>
                       )}
@@ -1405,7 +1296,7 @@ const MainPlaygroundPage: React.FC = () => {
                 </div>
 
                 {/* Editor and Preview */}
-                <div className="flex-1 bg-white dark:bg-zinc-900">
+                <div className="flex-1">
                   <ResizablePanelGroup direction="horizontal" className="h-full">
                     <ResizablePanel defaultSize={isPreviewVisible ? 50 : 100}>
                       <div className="h-full flex flex-col">
@@ -1427,15 +1318,14 @@ const MainPlaygroundPage: React.FC = () => {
                             onMount={handleEditorDidMount}
                             language={activeFile ? getEditorLanguage(activeFile.fileExtension || "") : "plaintext"}
                             options={defaultEditorOptions}
-                            theme="vs-dark"
                           />
                         </div>
 
                         {isTerminalVisible && (
                           <>
-                            <ResizableHandle className="bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600" />
-                            <div className="h-64 border-t border-zinc-200 dark:border-zinc-800">
-                              <TerminalAsync webcontainerUrl={serverUrl!} webContainerInstance={instance}  />
+                            <ResizableHandle />
+                            <div className="h-64 border-t">
+                              <TerminalAsync webcontainerUrl={serverUrl!} />
                             </div>
                           </>
                         )}
@@ -1444,18 +1334,16 @@ const MainPlaygroundPage: React.FC = () => {
 
                     {isPreviewVisible && (
                       <>
-                        <ResizableHandle className="bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600" />
+                        <ResizableHandle />
                         <ResizablePanel defaultSize={50}>
-                          <div className="h-full border-l border-zinc-200 dark:border-zinc-800">
-                            <WebContainerPreview
-                              templateData={templateData}
-                              instance={instance}
-                              writeFileSync={writeFileSync}
-                              isLoading={containerLoading}
-                              error={containerError}
-                              serverUrl={serverUrl!}
-                            />
-                          </div>
+                          <WebContainerPreview
+                            templateData={templateData}
+                            instance={instance}
+                            writeFileSync={writeFileSync}
+                            isLoading={containerLoading}
+                            error={containerError}
+                            serverUrl={serverUrl!}
+                          />
                         </ResizablePanel>
                       </>
                     )}
@@ -1463,42 +1351,32 @@ const MainPlaygroundPage: React.FC = () => {
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col h-full items-center justify-center bg-gradient-to-br from-zinc-50 to-zinc-100 dark:from-zinc-900 dark:to-zinc-800">
-                <Card className="border-zinc-200 dark:border-zinc-800 shadow-lg">
-                  <CardContent className="pt-6">
-                    <div className="flex flex-col items-center text-center space-y-4">
-                      <div className="p-6 bg-zinc-100 dark:bg-zinc-800 rounded-full">
-                        <FileText className="h-12 w-12 text-zinc-400 dark:text-zinc-500" />
-                      </div>
-                      <div className="space-y-2">
-                        <p className="text-lg font-medium text-zinc-900 dark:text-zinc-100">No files open</p>
-                        <p className="text-sm text-zinc-600 dark:text-zinc-400">Select a file from the sidebar to start editing</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+              <div className="flex flex-col h-full items-center justify-center text-muted-foreground gap-4">
+                <FileText className="h-16 w-16 text-gray-300" />
+                <div className="text-center">
+                  <p className="text-lg font-medium">No files open</p>
+                  <p className="text-sm text-gray-500">Select a file from the sidebar to start editing</p>
+                </div>
               </div>
             )}
           </div>
         </SidebarInset>
 
-        {/* Enhanced Confirmation Dialog */}
+        {/* Confirmation Dialog */}
         <Dialog
           open={confirmationDialog.isOpen}
           onOpenChange={(open) => setConfirmationDialog((prev) => ({ ...prev, isOpen: open }))}
         >
-          <DialogContent className="border-zinc-200 dark:border-zinc-800">
+          <DialogContent>
             <DialogHeader>
-              <DialogTitle className="text-zinc-900 dark:text-zinc-100">{confirmationDialog.title}</DialogTitle>
-              <DialogDescription className="text-zinc-600 dark:text-zinc-400">{confirmationDialog.description}</DialogDescription>
+              <DialogTitle>{confirmationDialog.title}</DialogTitle>
+              <DialogDescription>{confirmationDialog.description}</DialogDescription>
             </DialogHeader>
-            <DialogFooter className="gap-2">
+            <DialogFooter>
               <Button variant="outline" onClick={confirmationDialog.onCancel}>
                 Don't Save
               </Button>
-              <Button onClick={confirmationDialog.onConfirm}>
-                Save
-              </Button>
+              <Button onClick={confirmationDialog.onConfirm}>Save</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
