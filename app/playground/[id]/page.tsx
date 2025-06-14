@@ -38,6 +38,7 @@ import { findFilePath } from "@/features/playground/libs"
 import { useWebContainer } from "@/features/webcontainers/hooks/useWebContainer"
 import type { TemplateFolder } from "@/features/playground/libs/path-to-json"
 import { AISuggestionOverlay } from "@/features/playground/components/ai-suggestion-overlay"
+import { useFileExplorer } from "@/features/playground/hooks/useFileExplorer"
 
 
 // Dynamic imports for components that don't need SSR
@@ -77,14 +78,12 @@ const MainPlaygroundPage: React.FC = () => {
 
   // Core state
   const [playgroundData, setPlaygroundData] = useState<PlaygroundData | null>(null)
-  const [templateData, setTemplateData] = useState<TemplateFolder | null>(null)
+
   const [loadingStep, setLoadingStep] = useState<number>(1)
   const [error, setError] = useState<string | null>(null)
 
   // Multi-file editor state
-  const [openFiles, setOpenFiles] = useState<OpenFile[]>([])
-  const [activeFileId, setActiveFileId] = useState<string | null>(null)
-  const [editorContent, setEditorContent] = useState<string>("")
+
 
   // UI state
   const [confirmationDialog, setConfirmationDialog] = useState<ConfirmationDialog>({
@@ -115,6 +114,10 @@ const [isAISuggestionsEnabled, setIsAISuggestionsEnabled] = useState(true);
   const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastSyncedContent = useRef<Map<string, string>>(new Map())
   const suggestionTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  const {activeFileId , closeAllFiles , openFile , closeFile , editorContent , updateFileContent , handleAddFile , handleAddFolder , handleDeleteFile , handleDeleteFolder,handleRenameFile,handleRenameFolder,openFiles,setTemplateData,templateData , setEditorContent , setOpenFiles ,setActiveFileId} = useFileExplorer()
+
+  console.log("OpenFiles" , openFiles)
 
   // WebContainer hook
   const {
@@ -219,16 +222,12 @@ const [isAISuggestionsEnabled, setIsAISuggestionsEnabled] = useState(true);
     }
   }, [isWebContainerInitialized, destroy])
 
-  // Helper function to generate unique file ID
-  const generateFileId = useCallback((file: TemplateFile): string => {
-    return `${file.filename}.${file.fileExtension}`
-  }, [])
 
   // Get active file
-  const activeFile = openFiles.find((file) => file.id === activeFileId)
+  const activeFile =  openFiles.find((file) => file.id === activeFileId) 
 
   // Check if there are any unsaved changes
-  const hasUnsavedChanges = openFiles.some((file) => file.hasUnsavedChanges)
+  const hasUnsavedChanges =  openFiles.some((file) => file.hasUnsavedChanges)
 
   // Debounced sync to WebContainer
   const debouncedSync = useCallback(
@@ -337,406 +336,15 @@ const [isAISuggestionsEnabled, setIsAISuggestionsEnabled] = useState(true);
   }
 
   // File management functions
-  const openFile = (file: TemplateFile) => {
-    const fileId = generateFileId(file)
-    const existingFile = openFiles.find((f) => f.id === fileId)
+ 
 
-    if (existingFile) {
-      setActiveFileId(fileId)
-      setEditorContent(existingFile.content)
-      return
-    }
 
-    const newOpenFile: OpenFile = {
-      ...file,
-      id: fileId,
-      hasUnsavedChanges: false,
-      content: file.content || "",
-      originalContent: file.content || "",
-    }
-
-    setOpenFiles((prev) => [...prev, newOpenFile])
-    setActiveFileId(fileId)
-    setEditorContent(file.content || "")
-  }
-
-  const closeFile = (fileId: string) => {
-    const file = openFiles.find((f) => f.id === fileId)
-
-    if (file && file.hasUnsavedChanges) {
-      setConfirmationDialog({
-        isOpen: true,
-        title: "Unsaved Changes",
-        description: `You have unsaved changes in ${file.filename}.${file.fileExtension}. Do you want to save before closing?`,
-        onConfirm: async () => {
-          await handleSave(fileId)
-          closeFileForce(fileId)
-          setConfirmationDialog((prev) => ({ ...prev, isOpen: false }))
-        },
-        onCancel: () => {
-          closeFileForce(fileId)
-          setConfirmationDialog((prev) => ({ ...prev, isOpen: false }))
-        },
-      })
-    } else {
-      closeFileForce(fileId)
-    }
-  }
-
-  const closeFileForce = (fileId: string) => {
-    setOpenFiles((prev) => {
-      const newFiles = prev.filter((f) => f.id !== fileId)
-      const newActiveFile = newFiles.length > 0 ? newFiles[newFiles.length - 1] : null
-
-      if (newActiveFile) {
-        setActiveFileId(newActiveFile.id)
-        setEditorContent(newActiveFile.content)
-      } else {
-        setActiveFileId(null)
-        setEditorContent("")
-      }
-
-      return newFiles
-    })
-
-    lastSyncedContent.current.delete(fileId)
-  }
-
-  const closeAllFiles = () => {
-    const unsavedFiles = openFiles.filter((f) => f.hasUnsavedChanges)
-
-    if (unsavedFiles.length > 0) {
-      setConfirmationDialog({
-        isOpen: true,
-        title: "Unsaved Changes",
-        description: `You have unsaved changes in ${unsavedFiles.length} file(s). Do you want to save all before closing?`,
-        onConfirm: async () => {
-          await Promise.all(unsavedFiles.map((f) => handleSave(f.id)))
-          setOpenFiles([])
-          setActiveFileId(null)
-          setEditorContent("")
-          setConfirmationDialog((prev) => ({ ...prev, isOpen: false }))
-        },
-        onCancel: () => {
-          setOpenFiles([])
-          setActiveFileId(null)
-          setEditorContent("")
-          setConfirmationDialog((prev) => ({ ...prev, isOpen: false }))
-        },
-      })
-    } else {
-      setOpenFiles([])
-      setActiveFileId(null)
-      setEditorContent("")
-    }
-  }
+ 
 
   const handleFileSelect = (file: TemplateFile) => {
     openFile(file)
   }
 
-  const handleAddFile = (newFile: TemplateFile, parentPath: string) => {
-    if (!templateData) return
-
-    try {
-      const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder
-
-      if (!parentPath) {
-        updatedTemplateData.items.push(newFile)
-        setTemplateData(updatedTemplateData)
-        toast.success(`Created file: ${newFile.filename}.${newFile.fileExtension}`)
-        openFile(newFile)
-        return
-      }
-
-      const pathParts = parentPath.split("/")
-      let currentFolder = updatedTemplateData
-
-      for (const part of pathParts) {
-        const folder = currentFolder.items.find((item) => "folderName" in item && item.folderName === part) as
-          | TemplateFolder
-          | undefined
-
-        if (!folder) {
-          toast.error(`Folder not found: ${part}`)
-          return
-        }
-
-        currentFolder = folder
-      }
-
-      currentFolder.items.push(newFile)
-      setTemplateData(updatedTemplateData)
-      toast.success(`Created file: ${newFile.filename}.${newFile.fileExtension}`)
-      openFile(newFile)
-    } catch (error) {
-      console.error("Error adding file:", error)
-      toast.error("Failed to create file")
-    }
-  }
-
-  const handleAddFolder = (newFolder: TemplateFolder, parentPath: string) => {
-    if (!templateData) return
-
-    try {
-      const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder
-
-      if (!parentPath) {
-        updatedTemplateData.items.push(newFolder)
-        setTemplateData(updatedTemplateData)
-        toast.success(`Created folder: ${newFolder.folderName}`)
-        return
-      }
-
-      const pathParts = parentPath.split("/")
-      let currentFolder = updatedTemplateData
-
-      for (const part of pathParts) {
-        const folder = currentFolder.items.find((item) => "folderName" in item && item.folderName === part) as
-          | TemplateFolder
-          | undefined
-
-        if (!folder) {
-          toast.error(`Folder not found: ${part}`)
-          return
-        }
-
-        currentFolder = folder
-      }
-
-      currentFolder.items.push(newFolder)
-      setTemplateData(updatedTemplateData)
-      toast.success(`Created folder: ${newFolder.folderName}`)
-    } catch (error) {
-      console.error("Error adding folder:", error)
-      toast.error("Failed to create folder")
-    }
-  }
-
-  const handleDeleteFile = async (file: TemplateFile, parentPath: string) => {
-    if (!templateData || !id) return
-
-    try {
-      const fileId = generateFileId(file)
-      const isOpen = openFiles.some((f) => f.id === fileId)
-
-      if (isOpen) {
-        closeFileForce(fileId)
-      }
-
-      const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder
-
-      if (!parentPath) {
-        updatedTemplateData.items = updatedTemplateData.items.filter(
-          (item) =>
-            !("filename" in item && item.filename === file.filename && item.fileExtension === file.fileExtension),
-        )
-        setTemplateData(updatedTemplateData)
-        await SaveUpdatedCode(id, updatedTemplateData)
-        toast.success(`Deleted file: ${file.filename}.${file.fileExtension}`)
-        return
-      }
-
-      const pathParts = parentPath.split("/")
-      let currentFolder = updatedTemplateData
-
-      for (const part of pathParts) {
-        const folder = currentFolder.items.find((item) => "folderName" in item && item.folderName === part) as
-          | TemplateFolder
-          | undefined
-
-        if (!folder) {
-          toast.error(`Folder not found: ${part}`)
-          return
-        }
-
-        currentFolder = folder
-      }
-
-      currentFolder.items = currentFolder.items.filter(
-        (item) => !("filename" in item && item.filename === file.filename && item.fileExtension === file.fileExtension),
-      )
-
-      setTemplateData(updatedTemplateData)
-      await SaveUpdatedCode(id, updatedTemplateData)
-      toast.success(`Deleted file: ${file.filename}.${file.fileExtension}`)
-    } catch (error) {
-      console.error("Error deleting file:", error)
-      toast.error("Failed to delete file")
-    }
-  }
-
-  const handleDeleteFolder = async (folder: TemplateFolder, parentPath: string) => {
-    if (!templateData || !id) return
-
-    try {
-      const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder
-
-      if (!parentPath) {
-        updatedTemplateData.items = updatedTemplateData.items.filter(
-          (item) => !("folderName" in item && item.folderName === folder.folderName),
-        )
-        setTemplateData(updatedTemplateData)
-        await SaveUpdatedCode(id, updatedTemplateData)
-        toast.success(`Deleted folder: ${folder.folderName}`)
-        return
-      }
-
-      const pathParts = parentPath.split("/")
-      let currentFolder = updatedTemplateData
-
-      for (const part of pathParts) {
-        const targetFolder = currentFolder.items.find((item) => "folderName" in item && item.folderName === part) as
-          | TemplateFolder
-          | undefined
-
-        if (!targetFolder) {
-          toast.error(`Folder not found: ${part}`)
-          return
-        }
-
-        currentFolder = targetFolder
-      }
-
-      currentFolder.items = currentFolder.items.filter(
-        (item) => !("folderName" in item && item.folderName === folder.folderName),
-      )
-
-      setTemplateData(updatedTemplateData)
-      await SaveUpdatedCode(id, updatedTemplateData)
-      toast.success(`Deleted folder: ${folder.folderName}`)
-    } catch (error) {
-      console.error("Error deleting folder:", error)
-      toast.error("Failed to delete folder")
-    }
-  }
-
-  // Rename functions
-  const handleRenameFile = async (
-    file: TemplateFile,
-    newFilename: string,
-    newExtension: string,
-    parentPath: string,
-  ) => {
-    if (!templateData || !id) return
-
-    const oldFileId = generateFileId(file)
-    const newFile = { ...file, filename: newFilename, fileExtension: newExtension }
-    const newFileId = generateFileId(newFile)
-
-    const isOpen = openFiles.some((f) => f.id === oldFileId)
-
-    if (isOpen) {
-      setOpenFiles((prev) =>
-        prev.map((f) => {
-          if (f.id === oldFileId) {
-            return { ...f, ...newFile, id: newFileId }
-          }
-          return f
-        }),
-      )
-
-      if (activeFileId === oldFileId) {
-        setActiveFileId(newFileId)
-      }
-    }
-
-    const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder
-
-    const updateFileInItems = (items: (TemplateFile | TemplateFolder)[]): (TemplateFile | TemplateFolder)[] => {
-      return items.map((item) => {
-        if ("folderName" in item) {
-          return {
-            ...item,
-            items: updateFileInItems(item.items),
-          }
-        } else {
-          if (item.filename === file.filename && item.fileExtension === file.fileExtension) {
-            return { ...item, filename: newFilename, fileExtension: newExtension }
-          }
-          return item
-        }
-      })
-    }
-
-    if (!parentPath) {
-      updatedTemplateData.items = updateFileInItems(updatedTemplateData.items)
-    } else {
-      const pathParts = parentPath.split("/")
-      let currentFolder = updatedTemplateData
-
-      for (const part of pathParts) {
-        const folder = currentFolder.items.find((item) => "folderName" in item && item.folderName === part) as
-          | TemplateFolder
-          | undefined
-
-        if (!folder) {
-          toast.error(`Folder not found: ${part}`)
-          return
-        }
-
-        currentFolder = folder
-      }
-
-      currentFolder.items = updateFileInItems(currentFolder.items)
-    }
-
-    try {
-      await SaveUpdatedCode(id, updatedTemplateData)
-      setTemplateData(updatedTemplateData)
-      toast.success(`Renamed file to: ${newFilename}.${newExtension}`)
-    } catch (error) {
-      console.error("Error renaming file:", error)
-      toast.error("Failed to rename file")
-    }
-  }
-
-  const handleRenameFolder = async (folder: TemplateFolder, newFolderName: string, parentPath: string) => {
-    if (!templateData || !id) return
-
-    const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder
-
-    if (!parentPath) {
-      updatedTemplateData.items = updatedTemplateData.items.map((item) => {
-        if ("folderName" in item && item.folderName === folder.folderName) {
-          return { ...item, folderName: newFolderName }
-        }
-        return item
-      })
-    } else {
-      const pathParts = parentPath.split("/")
-      let currentFolder = updatedTemplateData
-
-      for (const part of pathParts) {
-        const targetFolder = currentFolder.items.find((item) => "folderName" in item && item.folderName === part) as
-          | TemplateFolder
-          | undefined
-
-        if (!targetFolder) {
-          toast.error(`Folder not found: ${part}`)
-          return
-        }
-
-        currentFolder = targetFolder
-      }
-
-      currentFolder.items = currentFolder.items.map((item) => {
-        if ("folderName" in item && item.folderName === folder.folderName) {
-          return { ...item, folderName: newFolderName }
-        }
-        return item
-      })
-    }
-
-    try {
-      await SaveUpdatedCode(id, updatedTemplateData)
-      setTemplateData(updatedTemplateData)
-      toast.success(`Renamed folder to: ${newFolderName}`)
-    } catch (error) {
-      console.error("Error renaming folder:", error)
-      toast.error("Failed to rename folder")
-    }
-  }
 
   // Editor functions
   const handleEditorDidMount = (editor: any, monaco: Monaco) => {
@@ -798,38 +406,10 @@ const [isAISuggestionsEnabled, setIsAISuggestionsEnabled] = useState(true);
   // Ref for debounce timeout
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  const handleEditorChange = (value: string | undefined) => {
-    if (value === undefined || !activeFile) return
-
-    // Clear existing suggestion when content changes
-    if (suggestion) {
-      clearSuggestion()
-    }
-
-    setEditorContent(value)
-
-    setOpenFiles((prev) =>
-      prev.map((file) => {
-        if (file.id === activeFile.id) {
-          const hasChanges = value !== file.originalContent
-
-          return {
-            ...file,
-            content: value,
-            hasUnsavedChanges: hasChanges,
-          }
-        }
-        return file
-      }),
-    )
-
-    // Trigger suggestion on certain characters
-    const lastChar = value.slice(-1)
-    if ([".", "(", "{", " ", "\n"].includes(lastChar)) {
-      debouncedSuggestion()
-    }
-  }
-
+  const handleEditorChange = useCallback((value: string | undefined) => {
+    if (!value || !activeFileId) return
+    updateFileContent(activeFileId, value)
+  }, [activeFileId, updateFileContent])
   const acceptCurrentSuggestion = () => {
     if (!suggestion || !suggestionPosition || !editorRef.current || !monacoRef.current) return;
 
@@ -1127,7 +707,7 @@ const [isAISuggestionsEnabled, setIsAISuggestionsEnabled] = useState(true);
           data={templateData}
           onFileSelect={handleFileSelect}
           selectedFile={activeFile}
-          title="Template Explorer"
+          title="File Explorer"
           onAddFile={handleAddFile}
           onAddFolder={handleAddFolder}
           onDeleteFile={handleDeleteFile}
