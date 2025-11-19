@@ -46,7 +46,24 @@ export const usePlayground = (id: string): UsePlaygroundReturn => {
 
       // Load template from API if not in saved content
       const res = await fetch(`/api/template/${id}`);
-      if (!res.ok) throw new Error(`Failed to load template: ${res.status}`);
+      if (!res.ok) {
+        // try to read a helpful error message from the API
+        let body: any = null;
+        try {
+          body = await res.json();
+        } catch {
+          try {
+            body = await res.text();
+          } catch {
+            body = null;
+          }
+        }
+        const msg = body && typeof body === 'object' ? JSON.stringify(body) : String(body);
+        console.error(`Failed to load template (status ${res.status}):`, msg);
+        setError(`Failed to load template: ${res.status}${msg ? ' - ' + msg : ''}`);
+        setIsLoading(false);
+        return;
+      }
 
       const templateRes = await res.json();
       if (templateRes.templateJson && Array.isArray(templateRes.templateJson)) {

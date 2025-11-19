@@ -1,5 +1,5 @@
-import * as fs from 'fs';
-import * as path from 'path';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * Represents a file in the template structure
@@ -247,6 +247,7 @@ export async function saveTemplateStructureToJson(
 
     
   } catch (error) {
+    // keep original behavior but with clearer message
     throw new Error(`Error saving template structure: ${(error as Error).message}`);
   }
 }

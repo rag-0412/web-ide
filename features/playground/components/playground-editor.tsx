@@ -344,11 +344,15 @@ export const PlaygroundEditor = ({
     })
 
     // CRITICAL: Override Tab key with high priority and prevent default Monaco behavior
-    if (tabCommandRef.current) {
-      tabCommandRef.current.dispose()
+    if (tabCommandRef.current && typeof tabCommandRef.current.dispose === 'function') {
+      try {
+        tabCommandRef.current.dispose()
+      } catch (e) {
+        console.error('Error disposing tab command:', e)
+      }
     }
 
-    tabCommandRef.current = editor.addCommand(
+    const cmdResult = editor.addCommand(
       monaco.KeyCode.Tab,
       () => {
         console.log("TAB PRESSED", {
@@ -389,6 +393,13 @@ export const PlaygroundEditor = ({
       // CRITICAL: Use specific context to override Monaco's built-in Tab handling
       "editorTextFocus && !editorReadonly && !suggestWidgetVisible",
     )
+    
+    // Store the command result if it exists
+    if (cmdResult !== undefined) {
+      tabCommandRef.current = cmdResult
+    } else {
+      tabCommandRef.current = null
+    }
 
     // Escape to reject
     editor.addCommand(monaco.KeyCode.Escape, () => {
@@ -511,8 +522,12 @@ export const PlaygroundEditor = ({
         inlineCompletionProviderRef.current.dispose()
         inlineCompletionProviderRef.current = null
       }
-      if (tabCommandRef.current) {
-        tabCommandRef.current.dispose()
+      if (tabCommandRef.current && typeof tabCommandRef.current.dispose === 'function') {
+        try {
+          tabCommandRef.current.dispose()
+        } catch (e) {
+          console.error('Error disposing tab command in cleanup:', e)
+        }
         tabCommandRef.current = null
       }
     }

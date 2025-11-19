@@ -209,7 +209,7 @@ const MainPlaygroundPage: React.FC = () => {
         const updatedTemplateData = JSON.parse(
           JSON.stringify(latestTemplateData)
         );
-        const updateFileContent = (items: any[]) =>
+        const updateFileContent = (items: any[]): any[] =>
           items.map((item) => {
             if ("folderName" in item) {
               return { ...item, items: updateFileContent(item.items) };
@@ -236,7 +236,11 @@ const MainPlaygroundPage: React.FC = () => {
 
         // Use saveTemplateData to persist changes
         const newTemplateData = await saveTemplateData(updatedTemplateData);
-        setTemplateData(newTemplateData || updatedTemplateData);
+        if (newTemplateData !== undefined) {
+          setTemplateData(newTemplateData);
+        } else {
+          setTemplateData(updatedTemplateData);
+        }
 
         // Update open files
         const updatedOpenFiles = openFiles.map((f) =>

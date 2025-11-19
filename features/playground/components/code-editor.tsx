@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import * as monaco from "monaco-editor"
 import { loader } from "@monaco-editor/react"
 import { cn } from "@/lib/utils"
+import { useAI } from '@/hooks/useAI';
 
 // Configure Monaco loader
 loader.config({ monaco })

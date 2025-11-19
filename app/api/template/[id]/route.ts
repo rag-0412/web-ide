@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { templatePaths } from "@/lib/template";
 import path from "path";
 import fs from "fs/promises";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 // Helper function to ensure valid JSON
 function validateJsonStructure(data: unknown): boolean {
@@ -58,14 +58,14 @@ export async function GET(
       return Response.json({ error: "Invalid JSON structure" }, { status: 500 });
     }
 
-
-
     await fs.unlink(outputFile);
 
-    return Response.json({ success: true, templateJson: result }, { status: 200 });
+    return NextResponse.json({ success: true, templateJson: result });
   } catch (error) {
-    console.error("Error generating template JSON:", error);
-    return Response.json({ error: "Failed to generate template" }, { status: 500 });
+    const message = (error as Error)?.message ?? "Unknown error";
+    // return a JSON error with an appropriate status (404 for missing dir, 500 otherwise)
+    const status = message.includes("does not exist") ? 404 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
 

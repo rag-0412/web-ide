@@ -115,6 +115,24 @@ const WebContainerPreview: React.FC<WebContainerPreviewProps> = ({
         // @ts-ignore
         const files = transformToWebContainerFormat(templateData);
 
+        // Determine package directory inside the transformed files (if package.json is nested)
+        function findPackageDir(fsObj: any, basePath = ""): string | null {
+          for (const key of Object.keys(fsObj)) {
+            const node = fsObj[key];
+            const currentPath = basePath ? `${basePath}/${key}` : key;
+            if (node && node.file && key === 'package.json') {
+              return basePath || ".";
+            }
+            if (node && node.directory) {
+              const found = findPackageDir(node.directory, currentPath);
+              if (found) return found;
+            }
+          }
+          return null;
+        }
+
+        const detectedPackageDir = findPackageDir(files) || null;
+
         setLoadingState((prev) => ({
           ...prev,
           transforming: false,
@@ -145,24 +163,108 @@ const WebContainerPreview: React.FC<WebContainerPreviewProps> = ({
           terminalRef.current.writeToTerminal("📦 Installing dependencies...\r\n");
         }
         
-        const installProcess = await instance.spawn("npm", ["install"]);
+        let pkgObj: any = null;
 
-        // Stream install output to terminal
-        installProcess.output.pipeTo(
-          new WritableStream({
-            write(data) {
-              // Write directly to terminal
-              if (terminalRef.current?.writeToTerminal) {
-                terminalRef.current.writeToTerminal(data);
-              }
-            },
-          })
-        );
+        // General helper to run a command and stream+capture logs
+                const wc = instance!;
+                async function runCmd(cmd: string, args: string[]) {
+                  const proc = await wc.spawn(cmd, args);
+                  let logs = "";
+                  try {
+                    proc.output.pipeTo(
+                      new WritableStream({
+                        write(data) {
+                          const text = String(data);
+                          logs += text;
+                          if (terminalRef.current?.writeToTerminal) {
+                            terminalRef.current.writeToTerminal(text);
+                          }
+                        },
+                      })
+                    );
+                  } catch (e) {
+                    // ignore pipe errors
+                  }
+        
+                  const code = await proc.exit;
+                  return { code, logs };
+                }
 
-        const installExitCode = await installProcess.exit;
+        // Diagnostics before install
+        if (terminalRef.current?.writeToTerminal) {
+          terminalRef.current.writeToTerminal("🔎 Running diagnostics before install...\r\n");
+        }
 
-        if (installExitCode !== 0) {
-          throw new Error(`Failed to install dependencies. Exit code: ${installExitCode}`);
+        try {
+          const nodeInfo = await runCmd("node", ["-v"]);
+          const npmInfo = await runCmd("npm", ["-v"]);
+          const registryInfo = await runCmd("npm", ["config", "get", "registry"]);
+
+          if (terminalRef.current?.writeToTerminal) {
+            terminalRef.current.writeToTerminal(`Node: ${nodeInfo.logs.trim()}\r\n`);
+            terminalRef.current.writeToTerminal(`Npm: ${npmInfo.logs.trim()}\r\n`);
+            terminalRef.current.writeToTerminal(`Registry: ${registryInfo.logs.trim()}\r\n`);
+          }
+
+          // Try to read package.json content (if mounted)
+          try {
+            const pkgPath = detectedPackageDir && detectedPackageDir !== '.' ? `${detectedPackageDir}/package.json` : 'package.json';
+            const pkgContent = await instance.fs.readFile(pkgPath, 'utf8');
+            const snippet = String(pkgContent).slice(0, 3000);
+            if (terminalRef.current?.writeToTerminal) {
+              terminalRef.current.writeToTerminal(`package.json (at ${pkgPath}):\n${snippet}\n---\n`);
+            }
+          try {
+              pkgObj = JSON.parse(pkgContent);
+            } catch (e) {
+              // ignore parse errors
+            }
+          } catch (e) {
+            if (terminalRef.current?.writeToTerminal) {
+              terminalRef.current.writeToTerminal(`⚠️ package.json not found at expected path. Detected package dir: ${detectedPackageDir}\r\n`);
+            }
+          }
+        } catch (diagErr) {
+          if (terminalRef.current?.writeToTerminal) {
+            terminalRef.current.writeToTerminal(`⚠️ Diagnostics failed: ${String(diagErr)}\r\n`);
+          }
+        }
+
+        // If no package.json was found, abort early with a clear message
+        if (!pkgObj && !detectedPackageDir) {
+          const msg = 'No package.json found in template. Cannot install or start the project. Please ensure your starter template includes a package.json at the project root or a nested folder.';
+          console.warn(msg);
+          if (terminalRef.current?.writeToTerminal) {
+            terminalRef.current.writeToTerminal(`❌ ${msg}\r\n`);
+          }
+          setSetupError(msg);
+          setIsSetupInProgress(false);
+          setLoadingState({
+            transforming: false,
+            mounting: false,
+            installing: false,
+            starting: false,
+            ready: false,
+          });
+          return;
+        }
+
+        // Attempt to install dependencies, capture logs and retry once with legacy-peer-deps
+        // Run install in detected package dir if any using npm --prefix or via bash -lc
+        const installTarget = detectedPackageDir && detectedPackageDir !== '.' ? detectedPackageDir : '.';
+
+        let installResult = await runCmd("bash", ["-lc", `npm install --prefix ${installTarget}`]);
+        if (installResult.code !== 0) {
+          // Retry once with legacy-peer-deps in case of peer dependency issues
+          if (terminalRef.current?.writeToTerminal) {
+            terminalRef.current.writeToTerminal("⚠️ Install failed, retrying with --legacy-peer-deps...\r\n");
+          }
+          installResult = await runCmd("bash", ["-lc", `npm install --prefix ${installTarget} --legacy-peer-deps`]);
+        }
+
+        if (installResult.code !== 0) {
+          const snippet = installResult.logs ? installResult.logs.slice(-4000) : "";
+          throw new Error(`Failed to install dependencies. Exit code: ${installResult.code}. Logs:\n${snippet}`);
         }
 
         if (terminalRef.current?.writeToTerminal) {
@@ -180,36 +282,65 @@ const WebContainerPreview: React.FC<WebContainerPreviewProps> = ({
         if (terminalRef.current?.writeToTerminal) {
           terminalRef.current.writeToTerminal("🚀 Starting development server...\r\n");
         }
-        
-        const startProcess = await instance.spawn("npm", ["run", "start"]);
 
-        // Listen for server ready event
-        instance.on("server-ready", (port: number, url: string) => {
-          console.log(`Server ready on port ${port} at ${url}`);
-          if (terminalRef.current?.writeToTerminal) {
-            terminalRef.current.writeToTerminal(`🌐 Server ready at ${url}\r\n`);
-          }
-          setPreviewUrl(url);
-          setLoadingState((prev) => ({
-            ...prev,
-            starting: false,
-            ready: true,
-          }));
-          setIsSetupComplete(true);
-          setIsSetupInProgress(false);
+        const startProcess = await instance.spawn("npm", ["run", scriptToRun], {
+          // keep shell semantics so --prefix etc work if used
+          // (webcontainer spawn accepts options; keep default if not needed)
         });
 
-        // Handle start process output - stream to terminal
+        // stream start output to terminal (already done)
         startProcess.output.pipeTo(
           new WritableStream({
             write(data) {
               if (terminalRef.current?.writeToTerminal) {
-                terminalRef.current.writeToTerminal(data);
+                terminalRef.current.writeToTerminal(String(data));
               }
             },
           })
         );
 
+        // wait for either server-ready event OR process exit
+        const waitForStart = Promise.race([
+          new Promise<void>((resolve) => {
+            // server-ready is emitted when a listening server is detected
+            const onReady = (port: number, url: string) => {
+              instance.off && instance.off("server-ready", onReady);
+              if (terminalRef.current?.writeToTerminal) {
+                terminalRef.current.writeToTerminal(`🌐 Server ready at ${url}\r\n`);
+              }
+              setPreviewUrl(url);
+              setLoadingState((prev) => ({ ...prev, starting: false, ready: true }));
+              setIsSetupComplete(true);
+              setIsSetupInProgress(false);
+              resolve();
+            };
+            // attach listener (use 'on' or 'addListener' depending on API)
+            if (instance.on) instance.on("server-ready", onReady);
+          }),
+          new Promise<void>(async (resolve) => {
+            // also observe the start process exit — short-lived scripts (node test.js) will exit
+            const code = await startProcess.exit;
+            if (code === 0) {
+              // treat successful exit as "ready" for single-run scripts — show output but no iframe
+              if (terminalRef.current?.writeToTerminal) {
+                terminalRef.current.writeToTerminal("✅ Process exited successfully.\r\n");
+              }
+              setLoadingState((prev) => ({ ...prev, starting: false, ready: true }));
+              setIsSetupComplete(true);
+              setIsSetupInProgress(false);
+              // leave previewUrl null for single-run scripts (no iframe)
+              resolve();
+            } else {
+              // will be handled by outer catch below (throw error to trigger catch)
+              const snippet = installResult?.logs?.slice(-4000) ?? "";
+              throw new Error(`Start script exited with code ${code}. Logs:\n${snippet}`);
+            }
+          }),
+        ]);
+
+        await waitForStart;
+
+        // Handle any errors that occurred during setup
       } catch (err) {
         console.error("Error setting up container:", err);
         const errorMessage = err instanceof Error ? err.message : String(err);
