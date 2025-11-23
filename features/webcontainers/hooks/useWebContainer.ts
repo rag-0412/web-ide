@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { TemplateFolder } from '@/features/playground/libs/path-to-json';
 
 interface UseWebContainerProps {
-  templateData: TemplateFolder;
+  templateData: TemplateFolder | null;
 }
 
 interface UseWebContainerReturn {

@@ -94,7 +94,6 @@ const MainPlaygroundPage: React.FC = () => {
     error: containerError,
     instance,
     writeFileSync,
-    // @ts-ignore
   } = useWebContainer({ templateData });
 
   const lastSyncedContent = useRef<Map<string, string>>(new Map());
@@ -209,12 +208,15 @@ const MainPlaygroundPage: React.FC = () => {
         const updatedTemplateData = JSON.parse(
           JSON.stringify(latestTemplateData)
         );
-        const updateFileContent = (items: any[]): any[] =>
+        const updateFileContent = (items: TemplateFile[]): TemplateFile[] =>
           items.map((item) => {
-            if ("folderName" in item) {
-              return { ...item, items: updateFileContent(item.items) };
+            if ("folderName" in item && "items" in item) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              return { ...item, items: updateFileContent((item as any).items) };
             } else if (
+              "filename" in item &&
               item.filename === fileToSave.filename &&
+              "fileExtension" in item &&
               item.fileExtension === fileToSave.fileExtension
             ) {
               return { ...item, content: fileToSave.content };
