@@ -1146,25 +1146,24 @@ export const AIChatSidePanel: React.FC<AIChatSidePanelProps> = ({
                           remarkPlugins={[remarkGfm, remarkMath]}
                           rehypePlugins={[rehypeKatex]}
                           components={{
-                            code: ({
-                              children,
-                              className,
-                              inline: _inline,
-                            }) => (
-                              <EnhancedCodeBlock
-                                className={className}
-                                inline={_inline as boolean}
-                                onInsert={
-                                  onInsertCode
-                                    ? (code) => handleInsertCode(code)
-                                    : undefined
-                                }
-                                onRun={onRunCode}
-                                theme={theme}
-                              >
-                                {String(children)}
-                              </EnhancedCodeBlock>
-                            ),
+                            code: (props: any) => {
+                              const { children, className, inline } = props;
+                              return (
+                                <EnhancedCodeBlock
+                                  className={className}
+                                  inline={inline as boolean}
+                                  onInsert={
+                                    onInsertCode
+                                      ? (code) => handleInsertCode(code)
+                                      : undefined
+                                  }
+                                  onRun={onRunCode}
+                                  theme={theme}
+                                >
+                                  {String(children)}
+                                </EnhancedCodeBlock>
+                              );
+                            },
                           }}
                         >
                           {msg.content}

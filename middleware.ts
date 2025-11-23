@@ -41,6 +41,6 @@ export default auth((req) => {
 });
 
 export const config = {
-  // copied from clerk
-  matcher: ["/((?!.+\\.[\\w]+$|_next).*)", "/", "/(api|trpc)(.*)"],
+  // exclude /api/ai and static files from auth redirects
+  matcher: ["/((?!api/ai|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)).*)"],
 };
