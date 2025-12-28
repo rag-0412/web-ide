@@ -24,6 +24,7 @@ export default function Home() {
         your coding experience with advanced features and seamless integration.
         It is designed to help you write, debug, and optimize your code
         efficiently.
+        code IDE
       </p>
       <Link href={"/dashboard"}>
         <Button variant={"brand"} className="mb-4" size={"lg"}>
