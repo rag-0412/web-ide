@@ -67,6 +67,12 @@ export async function GET(
     const status = message.includes("does not exist") ? 404 : 500;
     return NextResponse.json({ error: message }, { status });
   }
+  // app/api/template/[id]/route.ts
+
+  async function GET() {
+  return new Response("API updated at " + new Date().toISOString());
+}
+
 }
 
 
