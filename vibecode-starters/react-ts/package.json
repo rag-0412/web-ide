@@ -1,0 +1,11 @@
+{
+  "name": "react-ts-starter",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node hello.js ",
+    "start": "node hello.js"
+  },
+  "dependencies": {}
+}
+
